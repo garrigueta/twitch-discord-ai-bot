@@ -1,0 +1,12 @@
+# Twitch Bot dependencies
+twitchio
+
+# Discord Bot dependencies
+discord.py
+
+# Ollama integration
+requests
+
+# Utilities
+python-dotenv
+pydantic
