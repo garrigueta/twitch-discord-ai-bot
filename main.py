@@ -20,7 +20,7 @@ async def main():
     """Main function to run both Twitch and Discord bots."""
     # Create task list
     tasks = []
-    
+
     # Initialize and run Twitch bot if token is available
     if TWITCH_TOKEN:
         logger.info("Starting Twitch bot...")
@@ -28,7 +28,7 @@ async def main():
         tasks.append(twitch_bot.start())
     else:
         logger.warning("Twitch token not found. Twitch bot will not start.")
-    
+
     # Initialize and run Discord bot if token is available
     if DISCORD_TOKEN:
         logger.info("Starting Discord bot...")
@@ -36,12 +36,12 @@ async def main():
         tasks.append(discord_bot.start(DISCORD_TOKEN))
     else:
         logger.warning("Discord token not found. Discord bot will not start.")
-    
+
     # Check if we have any bots to run
     if not tasks:
         logger.error("No bot tokens found. Please configure your .env file with bot credentials.")
         return
-    
+
     # Run all bots concurrently
     try:
         await asyncio.gather(*tasks)

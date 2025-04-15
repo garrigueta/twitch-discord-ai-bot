@@ -5,13 +5,9 @@ import os
 import requests
 import json
 import logging
-import random
-import datetime
-import socket
 import glob
 from collections import deque
 from typing import Dict, List, Any, Optional, Tuple
-import aiohttp
 
 from config.config import (
     OLLAMA_BASE_URL,
