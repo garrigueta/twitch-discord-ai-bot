@@ -1,9 +1,11 @@
 import asyncio
 import logging
 import os
+import sys
 from dotenv import load_dotenv
 from src.twitch_bot import TwitchBot
 from src.discord_bot import DiscordBot
+from src.ollama_integration import OllamaClient
 from config.config import TWITCH_TOKEN, DISCORD_TOKEN
 
 # Configure logging
@@ -16,8 +18,27 @@ logger = logging.getLogger(__name__)
 # Load environment variables
 load_dotenv()
 
+async def check_ai_health():
+    """Check if the Ollama API is responsive before starting the bots."""
+    logger.info("Performing AI health check...")
+    client = OllamaClient()
+    is_healthy, message = await client.health_check()
+    
+    if not is_healthy:
+        logger.error(f"AI health check failed: {message}")
+        logger.error("Make sure the Ollama server is running and accessible.")
+        return False
+    
+    logger.info(f"AI health check passed: {message}")
+    return True
+
 async def main():
     """Main function to run both Twitch and Discord bots."""
+    # First, check if the AI backend is responsive
+    if not await check_ai_health():
+        logger.error("AI backend is not accessible. Exiting...")
+        sys.exit(1)
+        
     # Create task list
     tasks = []
 

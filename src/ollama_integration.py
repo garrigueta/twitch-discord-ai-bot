@@ -2,10 +2,11 @@
 Ollama API integration for the AI bot.
 """
 import os
-import requests
 import json
 import logging
 import glob
+import aiohttp
+import asyncio
 from collections import deque
 from typing import Dict, List, Any, Optional, Tuple
 
@@ -20,7 +21,6 @@ from config.config import (
     LANGUAGE,
     SUPPORTED_LANGUAGES
 )
-from src.mcp.base import registry as mcp_registry
 
 logger = logging.getLogger(__name__)
 
@@ -42,8 +42,28 @@ class OllamaClient:
         self.knowledge_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "knowledge")
         os.makedirs(self.knowledge_dir, exist_ok=True)
         
-    def generate_response(self, message: str, username: str = "", platform: str = "", 
-                          channel_id: str = "", conversation_history: List[Dict[str, str]] = None) -> str:
+        # Auto-activate all knowledge files at startup
+        self._activate_all_knowledge_files()
+        
+    def _activate_all_knowledge_files(self):
+        """Automatically activate all knowledge files at startup."""
+        knowledge_files = self._scan_knowledge_files()
+        
+        if not knowledge_files:
+            logger.info("No knowledge files found to activate at startup.")
+            return
+            
+        # Activate each knowledge file
+        for knowledge_name in knowledge_files:
+            success, message = self.activate_knowledge(knowledge_name)
+            if success:
+                logger.info("Auto-activated knowledge file at startup: %s", knowledge_name)
+            else:
+                logger.warning("Failed to activate knowledge file at startup: %s (%s)", knowledge_name, message)
+
+    async def generate_response(self, message: str, username: str = "", platform: str = "", 
+                          channel_id: str = "", conversation_history: List[Dict[str, str]] = None,
+                          memory_context: str = None) -> str:
         """
         Generate a response from the Ollama API.
         
@@ -53,15 +73,36 @@ class OllamaClient:
             platform: The platform (twitch, discord)
             channel_id: The channel ID where the message was sent
             conversation_history: List of previous messages in the conversation
+            memory_context: Context retrieved from vector memory database
             
         Returns:
             The generated response
         """
+        # Ensure knowledge files are activated
+        if not self.active_knowledge:
+            # Auto-activate knowledge files if none are active
+            knowledge_files = self._scan_knowledge_files()
+            for knowledge_name in knowledge_files:
+                success, _ = self.activate_knowledge(knowledge_name)
+                if success:
+                    logger.info("Auto-activated knowledge file: %s", knowledge_name)
+        
         system_prompt = self.get_current_persona_prompt()
         
         # Add platform-specific context to the system prompt
         platform_context = f"The user {username} is chatting on {platform}."
         system_prompt = f"{system_prompt}\n\n{platform_context}"
+        
+        # Add vector memory context if available
+        if memory_context:
+            memory_prompt = (
+                "\n\nA continuación hay información relevante de la base de datos vectorial "
+                "que puede ser útil para responder a la consulta del usuario. Esta información "
+                "proviene tanto de conversaciones pasadas como de la base de conocimientos.\n\n"
+                f"{memory_context}"
+            )
+            system_prompt = f"{system_prompt}\n\n{memory_prompt}"
+            logger.info("Added vector memory context to prompt")
         
         # Call the API
         payload = {
@@ -87,128 +128,216 @@ class OllamaClient:
             formatted_history.append({"role": "user", "content": message})
             payload["messages"] = formatted_history
         
-        try:
-            # Check if we need to query MCP providers for additional context
-            mcp_context = self._get_mcp_context(message)
-            if mcp_context:
-                system_prompt = f"{system_prompt}\n\nRelevant context from data sources:\n{mcp_context}"
-                payload["system"] = system_prompt
-            
-            # Make the API call
-            response = requests.post(f"{self.api_url}/api/chat", json=payload)
-            response.raise_for_status()
-            data = response.json()
-            
-            # Extract the response text
-            if "message" in data and "content" in data["message"]:
-                result = data["message"]["content"]
-                return result.strip()
-                
-            return "I'm not sure how to respond to that."
-            
-        except requests.RequestException as e:
-            logger.error(f"Error calling Ollama API: {e}")
-            return "Sorry, I'm having trouble connecting to my brain right now."
-            
-    async def _query_mcp_providers(self, query: str) -> Dict[str, Any]:
-        """
-        Query MCP providers for additional context.
+        # Define increased timeout and max retries
+        timeout = aiohttp.ClientTimeout(total=45)  # Increased to 45 seconds
+        max_retries = 2
+        retry_delay = 1  # Seconds to wait between retries
         
-        Args:
-            query: The user's query
-            
-        Returns:
-            Combined results from all MCP providers
-        """
-        return await mcp_registry.query(query)
-        
-    def _get_mcp_context(self, query: str) -> str:
-        """
-        Get additional context from MCP providers for the given query.
-        
-        Args:
-            query: The user's query
-            
-        Returns:
-            Formatted context string or empty string if no context available
-        """
-        # For synchronous use, we need to run the async query in an event loop
-        import asyncio
-        
-        try:
-            # Create or get the event loop
+        for attempt in range(max_retries + 1):
             try:
-                loop = asyncio.get_event_loop()
-            except RuntimeError:
-                # If no event loop exists in this thread, create a new one
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                
-            # Run the async query in the event loop
-            results = loop.run_until_complete(self._query_mcp_providers(query))
-            
-            # If we have results, format them for inclusion in the prompt
-            if results:
-                context_parts = []
-                context_parts.append("I have retrieved the following information to help answer your question:")
-                
-                for provider, data in results.items():
-                    context_parts.append(f"\n--- Information from {provider} ---")
-                    
-                    # Format the data based on content
-                    if isinstance(data, dict):
-                        # Handle specific provider data formats
-                        if provider == "Garage61" and "items" in data:
-                            # Format list of items
-                            items = data["items"]
-                            context_parts.append(f"Found {len(items)} items:")
-                            for item in items:
-                                item_str = ", ".join([f"{k}: {v}" for k, v in item.items()])
-                                context_parts.append(f"• {item_str}")
-                        elif "message" in data:
-                            # If there's a message field, display it prominently
-                            context_parts.append(data["message"])
+                # Use aiohttp for async HTTP requests
+                async with aiohttp.ClientSession() as session:
+                    async with session.post(
+                        f"{self.api_url}/api/chat", 
+                        json=payload,
+                        timeout=timeout
+                    ) as response:
+                        if response.status != 200:
+                            error_text = await response.text()
+                            logger.error("Ollama API error (attempt %d/%d): %s - %s", 
+                                         attempt + 1, max_retries + 1, response.status, error_text)
                             
-                            # Add any other data as additional details
-                            for key, value in data.items():
-                                if key != "message" and key != "note":
-                                    if isinstance(value, list):
-                                        context_parts.append(f"\n{key}:")
-                                        for item in value:
-                                            if isinstance(item, dict):
-                                                context_parts.append(f"• {json.dumps(item)}")
-                                            else:
-                                                context_parts.append(f"• {item}")
-                                    else:
-                                        context_parts.append(f"\n{key}: {value}")
-                        else:
-                            # Generic dictionary formatting
-                            for key, value in data.items():
-                                if key == "note":
-                                    continue  # Skip notes in the formatted output
-                                if isinstance(value, list) and value and isinstance(value[0], dict):
-                                    context_parts.append(f"\n{key}:")
-                                    for item in value:
-                                        context_parts.append(f"• {json.dumps(item)}")
-                                else:
-                                    context_parts.append(f"\n{key}: {value}")
-                    else:
-                        # For non-dictionary results, just add as string
-                        context_parts.append(str(data))
+                            # If this was the last attempt, return error message
+                            if attempt == max_retries:
+                                return "Lo siento, estoy teniendo problemas para conectarme a mi cerebro en este momento."
+                        
+                        data = await response.json()
+                        
+                        # Extract the response text
+                        if "message" in data and "content" in data["message"]:
+                            result = data["message"]["content"]
+                            return result.strip()
+                        
+                        # If we got here without a proper response, try again
+                        logger.warning("No valid response in Ollama API result (attempt %d/%d)", 
+                                       attempt + 1, max_retries + 1)
+                        
+                        # If this was our last attempt, return a fallback message
+                        if attempt == max_retries:
+                            return "No estoy seguro de cómo responder a eso."
                 
-                context_parts.append("\n--- End of retrieved information ---")
-                return "\n".join(context_parts)
+            except asyncio.TimeoutError:
+                logger.error("Timeout calling Ollama API (attempt %d/%d, timeout=%d seconds)",
+                             attempt + 1, max_retries + 1, timeout.total)
                 
-            # If no results, return just the capabilities
-            return mcp_registry.get_capabilities_prompt()
+                # If this was the last attempt, return specific timeout message
+                if attempt == max_retries:
+                    return ("Lo siento, me está tomando demasiado tiempo procesar tu mensaje. " 
+                            "El modelo podría estar ocupado o la consulta es demasiado compleja. " 
+                            "¿Podrías intentar con una pregunta más simple?")
             
-        except Exception as e:
-            logger.error(f"Error getting MCP context: {e}")
-            return mcp_registry.get_capabilities_prompt()
+            except aiohttp.ClientError as e:
+                logger.error("Error calling Ollama API (attempt %d/%d): %s", 
+                             attempt + 1, max_retries + 1, e)
+                
+                # If this was the last attempt, return error message
+                if attempt == max_retries:
+                    return "Lo siento, estoy teniendo problemas técnicos. Intentémoslo de nuevo más tarde."
+            
+            # Wait before retrying
+            if attempt < max_retries:
+                await asyncio.sleep(retry_delay)
+                # Increase delay for next attempt
+                retry_delay *= 2  # Exponential backoff
+
+    async def generate_response_stream(self, message: str, username: str = "", platform: str = "", 
+                                channel_id: str = "", conversation_history: List[Dict[str, str]] = None,
+                                memory_context: str = None):
+        """
+        Generate a streaming response from the Ollama API.
         
-    def generate_persona_response(self, message: str, persona: str, username: str = "", 
+        Args:
+            message: The message to respond to
+            username: The username of the sender
+            platform: The platform (twitch, discord)
+            channel_id: The channel ID where the message was sent
+            conversation_history: List of previous messages in the conversation
+            memory_context: Context retrieved from vector memory database
+            
+        Returns:
+            An async generator that yields response chunks as they are generated
+        """
+        # Ensure knowledge files are activated
+        if not self.active_knowledge:
+            # Auto-activate knowledge files if none are active
+            knowledge_files = self._scan_knowledge_files()
+            for knowledge_name in knowledge_files:
+                success, _ = self.activate_knowledge(knowledge_name)
+                if success:
+                    logger.info("Auto-activated knowledge file: %s", knowledge_name)
+        
+        system_prompt = self.get_current_persona_prompt()
+        
+        # Add platform-specific context to the system prompt
+        platform_context = f"The user {username} is chatting on {platform}."
+        system_prompt = f"{system_prompt}\n\n{platform_context}"
+        
+        # Add vector memory context if available
+        if memory_context:
+            memory_prompt = (
+                "\n\nA continuación hay información relevante de la base de datos vectorial "
+                "que puede ser útil para responder a la consulta del usuario. Esta información "
+                "proviene tanto de conversaciones pasadas como de la base de conocimientos.\n\n"
+                f"{memory_context}"
+            )
+            system_prompt = f"{system_prompt}\n\n{memory_prompt}"
+            logger.info("Added vector memory context to prompt")
+        
+        # Call the API
+        payload = {
+            "model": self.model,
+            "prompt": message,
+            "system": system_prompt,
+            "stream": True,  # Enable streaming
+            "options": {
+                "temperature": 0.7,
+                "top_p": 0.9,
+                "num_predict": 1024
+            }
+        }
+        
+        # Add conversation history if provided
+        if conversation_history and len(conversation_history) > 0:
+            formatted_history = []
+            for entry in conversation_history:
+                role = "user" if entry["role"] == "User" else "assistant"
+                formatted_history.append({"role": role, "content": entry["content"]})
+                
+            # Add the current message
+            formatted_history.append({"role": "user", "content": message})
+            payload["messages"] = formatted_history
+        
+        # Define timeout
+        timeout = aiohttp.ClientTimeout(total=60)  # Longer timeout for streaming
+        
+        # For error tracking
+        error_occurred = False
+        full_response = ""
+        
+        try:
+            # Use aiohttp for async HTTP requests with streaming
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f"{self.api_url}/api/chat", 
+                    json=payload,
+                    timeout=timeout
+                ) as response:
+                    if response.status != 200:
+                        logger.error("Ollama API error: %s - %s", response.status, await response.text())
+                        yield "Lo siento, estoy teniendo problemas para conectarme a mi cerebro en este momento."
+                        error_occurred = True
+                        
+                    if not error_occurred:
+                        # Process the streaming response
+                        buffer = ""
+                        
+                        async for line in response.content:
+                            if not line:
+                                continue
+                                
+                            line_text = line.decode('utf-8').strip()
+                            if not line_text:
+                                continue
+                                
+                            try:
+                                # Parse JSON response chunk
+                                data = json.loads(line_text)
+                                
+                                if "message" in data and "content" in data["message"]:
+                                    # Get the new content chunk
+                                    chunk = data["message"]["content"]
+                                    if chunk:
+                                        # Append to the full response
+                                        full_response += chunk
+                                        buffer += chunk
+                                        
+                                        # Yield the buffer when we have a decent chunk or at end
+                                        if len(buffer) >= 4 or "done" in data:
+                                            yield buffer
+                                            buffer = ""
+                                            
+                                # Check if we're done
+                                if "done" in data and data["done"]:
+                                    if buffer:  # Yield any remaining buffer
+                                        yield buffer
+                                    break
+                                    
+                            except json.JSONDecodeError:
+                                logger.warning("Failed to parse streaming response chunk: %s", line_text)
+                                continue
+                                
+                        # If we didn't get any response, yield a fallback message
+                        if not full_response:
+                            yield "No estoy seguro de cómo responder a eso."
+                    
+        except asyncio.TimeoutError:
+            logger.error("Timeout in streaming response from Ollama API")
+            yield "Lo siento, me está tomando demasiado tiempo procesar tu mensaje. ¿Podrías intentar con una pregunta más simple?"
+            full_response = "Lo siento, me está tomando demasiado tiempo procesar tu mensaje."
+            
+        except aiohttp.ClientError as e:
+            logger.error("Error in streaming response from Ollama API: %s", e)
+            yield "Lo siento, estoy teniendo problemas técnicos. Intentémoslo de nuevo más tarde."
+            full_response = "Lo siento, estoy teniendo problemas técnicos."
+            
+        # Store the completed response as an attribute that can be accessed after the generator completes
+        # This is a common pattern to return values from async generators
+        self._last_stream_response = full_response.strip()
+
+    async def generate_persona_response(self, message: str, persona: str, username: str = "", 
                                 platform: str = "", channel_id: str = "", 
-                                conversation_history: List[Dict[str, str]] = None) -> str:
+                                conversation_history: List[Dict[str, str]] = None,
+                                memory_context: str = None) -> str:
         """
         Generate a response from a specific persona without changing the current one.
         
@@ -219,6 +348,7 @@ class OllamaClient:
             platform: The platform (twitch, discord)
             channel_id: The channel ID where the message was sent
             conversation_history: List of previous messages in the conversation
+            memory_context: Context retrieved from vector memory database
             
         Returns:
             The generated response
@@ -230,12 +360,13 @@ class OllamaClient:
         self.current_persona = persona
         
         # Generate response with the temporary persona
-        response = self.generate_response(
+        response = await self.generate_response(
             message, 
             username=username, 
             platform=platform,
             channel_id=channel_id,
-            conversation_history=conversation_history
+            conversation_history=conversation_history,
+            memory_context=memory_context
         )
         
         # Restore original persona
@@ -243,7 +374,7 @@ class OllamaClient:
         
         return response
         
-    def analyze_message(self, message: str, username: str = "", platform: str = "",
+    async def analyze_message(self, message: str, username: str = "", platform: str = "",
                      channel_id: str = "") -> Tuple[bool, Optional[str]]:
         """
         Analyze a message to decide if the AI should respond.
@@ -259,9 +390,9 @@ class OllamaClient:
         """
         # Construct a query to the AI
         system_prompt = (
-            "You are a helpful assistant deciding whether a message in a chat requires a response. "
-            "If the message is a question, greeting, or otherwise seems to expect a response, "
-            "return 'RESPOND: [your response]'. If it does not require a response, return 'IGNORE'."
+            "Eres un asistente útil que decide si un mensaje en un chat requiere una respuesta. "
+            "Si el mensaje es una pregunta, un saludo o parece esperar una respuesta, "
+            "devuelve 'RESPOND: [tu respuesta]'. Si no requiere respuesta, devuelve 'IGNORE'."
         )
         
         try:
@@ -275,25 +406,33 @@ class OllamaClient:
                 }
             }
             
-            response = requests.post(f"{self.api_url}/api/generate", json=payload)
-            response.raise_for_status()
-            data = response.json()
-            
-            # Extract the decision
-            if "response" in data:
-                result = data["response"].strip()
-                
-                if result.startswith("RESPOND:"):
-                    # Extract the suggested response
-                    ai_response = result[8:].strip()  # Remove "RESPOND: " prefix
-                    return True, ai_response
-                else:
-                    return False, None
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f"{self.api_url}/api/generate", 
+                    json=payload,
+                    timeout=aiohttp.ClientTimeout(total=10)  # 10 second timeout
+                ) as response:
+                    if response.status != 200:
+                        logger.error("Error de API Ollama: %s - %s", response.status, await response.text())
+                        return False, None
                     
-            return False, None
+                    data = await response.json()
+                    
+                    # Extract the decision
+                    if "response" in data:
+                        result = data["response"].strip()
+                        
+                        if result.startswith("RESPOND:"):
+                            # Extract the suggested response
+                            ai_response = result[8:].strip()  # Remove "RESPOND: " prefix
+                            return True, ai_response
+                        else:
+                            return False, None
+                            
+                    return False, None
             
-        except requests.RequestException as e:
-            logger.error(f"Error calling Ollama API for analysis: {e}")
+        except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+            logger.error("Error al llamar a la API de Ollama para análisis: %s", e)
             return False, None
             
     def set_persona(self, persona: str) -> Tuple[bool, str]:
@@ -308,10 +447,10 @@ class OllamaClient:
         """
         if persona in AI_PERSONAS:
             self.current_persona = persona
-            return True, f"Persona set to {persona}"
+            return True, f"Personalidad cambiada a {persona}"
         else:
             available = ", ".join(AI_PERSONAS.keys())
-            return False, f"Unknown persona '{persona}'. Available personas: {available}"
+            return False, f"Personalidad '{persona}' desconocida. Personalidades disponibles: {available}"
             
     def set_language(self, language: str) -> Tuple[bool, str]:
         """
@@ -325,10 +464,10 @@ class OllamaClient:
         """
         if language in SUPPORTED_LANGUAGES:
             self.current_language = language
-            return True, f"Language set to {language}"
+            return True, f"Idioma cambiado a {language}"
         else:
             available = ", ".join(SUPPORTED_LANGUAGES)
-            return False, f"Unknown language '{language}'. Available languages: {available}"
+            return False, f"Idioma '{language}' desconocido. Idiomas disponibles: {available}"
         
     def get_current_persona_prompt(self):
         """Get the system prompt for the current persona with language instructions and knowledge files."""
@@ -342,20 +481,20 @@ class OllamaClient:
         knowledge_prompt = ""
         if knowledge_content:
             knowledge_prompt = (
-                "\n\nYou have access to the following knowledge base. Use this information when responding to questions:\n\n"
+                "\n\nTienes acceso a la siguiente base de conocimientos. Usa esta información al responder preguntas:\n\n"
                 f"{knowledge_content}"
-                "\n\nWhen responding to questions related to this knowledge, cite it as your source."
+                "\n\nCuando respondas preguntas que se relacionen directamente con la base de conocimientos, asegúrate de usar SOLO la información proporcionada."
             )
         
-        # Add additional context awareness guidance
+        # Add additional context awareness guidance (language instructions first and last for emphasis)
         context_prompt = (
-            f"{language_prompt}\n\n"  # Language instructions first for higher priority
+            f"{language_prompt}\n\n" 
             f"{base_prompt}\n\n"  
-            "Pay attention to the conversation history and context provided. "
-            "Your answers should be concise (1-3 sentences) and tailored to the platform. "
-            "Avoid any controversial topics and potential harmful content."
-            f"{knowledge_prompt}\n\n"  # Add knowledge base content
-            f"Remember: {language_prompt}"  # Repeat language instruction at the end for emphasis
+            "Presta atención al historial de conversación y al contexto proporcionado. "
+            "Tus respuestas deben ser concisas (1-3 oraciones) y adaptadas a la plataforma. "
+            "Evita cualquier tema controvertido y contenido potencialmente dañino."
+            f"{knowledge_prompt}\n\n"
+            f"INSTRUCCIÓN FINAL IMPORTANTE: {language_prompt}"  # Emphasized as final instruction for higher adherence
         )
         return context_prompt
         
@@ -436,35 +575,91 @@ class OllamaClient:
         knowledge_files = self._scan_knowledge_files()
         
         if knowledge_name not in knowledge_files:
-            return False, f"Knowledge file '{knowledge_name}' not found"
+            return False, f"Archivo de conocimiento '{knowledge_name}' no encontrado"
             
         if knowledge_name in self.active_knowledge:
-            return True, f"Knowledge file '{knowledge_name}' is already active"
+            return True, f"Archivo de conocimiento '{knowledge_name}' ya está activo"
             
         self.active_knowledge.append(knowledge_name)
         logger.info(f"Activated knowledge file: {knowledge_name}")
-        return True, f"Activated knowledge file: {knowledge_name}"
+        return True, f"Archivo de conocimiento '{knowledge_name}' activado"
         
     def deactivate_knowledge(self, knowledge_name):
         """Deactivate a knowledge file."""
         if knowledge_name not in self.active_knowledge:
-            return False, f"Knowledge file '{knowledge_name}' is not active"
+            return False, f"Archivo de conocimiento '{knowledge_name}' no está activo"
             
         self.active_knowledge.remove(knowledge_name)
         logger.info(f"Deactivated knowledge file: {knowledge_name}")
-        return True, f"Deactivated knowledge file: {knowledge_name}"
+        return True, f"Archivo de conocimiento '{knowledge_name}' desactivado"
         
     def list_knowledge_files(self):
         """List all available knowledge files."""
         knowledge_files = self._scan_knowledge_files()
-        result = "Available knowledge files:\n\n"
+        result = "Archivos de conocimiento disponibles:\n\n"
         
         if not knowledge_files:
-            return result + "No knowledge files found. Add .txt, .md or .json files to the 'knowledge' directory."
+            return result + "No se encontraron archivos de conocimiento. Añade archivos .txt, .md o .json al directorio 'knowledge'."
             
         for name, info in knowledge_files.items():
-            status = "[ACTIVE]" if name in self.active_knowledge else ""
+            status = "[ACTIVO]" if name in self.active_knowledge else ""
             size_kb = info['size'] / 1024
             result += f"• {name} ({info['type']}, {size_kb:.1f} KB) {status}\n"
             
         return result
+
+    async def health_check(self) -> Tuple[bool, str]:
+        """
+        Perform a health check on the Ollama API to ensure it's responsive.
+        
+        Returns:
+            A tuple of (is_healthy, message)
+        """
+        try:
+            # Use a short timeout for the health check
+            timeout = aiohttp.ClientTimeout(total=10)
+            
+            # Create a simple query to test API responsiveness
+            payload = {
+                "model": self.model,
+                "prompt": "Hello",
+                "system": "You are a helpful assistant. Respond with 'OK' only.",
+                "stream": False,
+                "options": {
+                    "temperature": 0.0,  # Use deterministic output
+                    "num_predict": 10   # Keep response very short
+                }
+            }
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f"{self.api_url}/api/chat", 
+                    json=payload,
+                    timeout=timeout
+                ) as response:
+                    if response.status != 200:
+                        error_text = await response.text()
+                        logger.error("Health check failed: %s - %s", response.status, error_text)
+                        return False, f"API error: {response.status}"
+                    
+                    data = await response.json()
+                    
+                    # Verify we got a valid response structure
+                    if "message" in data and "content" in data["message"]:
+                        logger.info("Health check successful: Ollama API is responsive")
+                        return True, "Ollama API is responsive"
+                    else:
+                        logger.error("Health check failed: Unexpected response format")
+                        return False, "Unexpected response format from API"
+            
+        except asyncio.TimeoutError:
+            logger.error("Health check failed: Timeout connecting to Ollama API")
+            return False, "Timeout connecting to Ollama API"
+            
+        except aiohttp.ClientError as e:
+            logger.error("Health check failed: %s", e)
+            return False, f"Connection error: {e}"
+            
+        except Exception as e:
+            logger.error("Health check failed with unexpected error: %s", e)
+            return False, f"Unexpected error: {e}"

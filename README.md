@@ -11,12 +11,16 @@ This project implements a dual-platform bot for both Twitch and Discord with AI 
 - **Model Context Protocol (MCP)**: Access external data sources like racing information through a unified protocol
 - **Knowledge Management**: Add custom knowledge files to enhance the bot's information base
 - **Enhanced Context Awareness**: Bot remembers conversations and channel context for more relevant responses
+- **Vector Memory System**: Stores and retrieves relevant conversation history and knowledge using semantic search
+- **Intent Detection System**: Automatically recognizes user intents and provides appropriate responses
+- **Language Support**: Full support for both English and Spanish with language-aware responses
 - **Intelligent Interaction**: 
   - Responds when directly addressed with a trigger phrase
   - Can randomly respond to messages based on configured probability
   - Analyzes messages to determine if they require a response
 - **Conversation Tracking**: Maintains conversation history for more contextual responses
 - **Cross-Channel User Recognition**: Remembers users across different channels and platforms
+- **Admin Controls**: Secure management commands accessible only to authorized users
 
 ## Prerequisites
 
@@ -66,6 +70,13 @@ This project implements a dual-platform bot for both Twitch and Discord with AI 
    ENABLE_AI_RESPONSE=True
    AI_TRIGGER_PHRASE=@bot
    AI_RESPONSE_PROBABILITY=0.1
+
+   # Intent Detection Configuration
+   ENABLE_INTENT_DETECTION=True
+
+   # Admin Configuration
+   DISCORD_MASTER_USER=your_discord_username#1234
+   TWITCH_MASTER_USER=your_twitch_username
    ```
 
 ## Usage
@@ -90,20 +101,34 @@ This project implements a dual-platform bot for both Twitch and Discord with AI 
 - `!ai <message>` - Ask the AI a direct question
 
 #### Persona Commands
-- `!persona <name>` - Switch the bot's active personality (default, streamer, expert, comedian, motivator)
+- `!persona <name>` - Switch the bot's active personality (default, streamer, expert, comedian, motivator) (Admin only)
 - `!personas` - List all available AI personas with descriptions
 - `!ask <persona> <message>` - Ask a question to a specific persona without changing the current one
 
 #### Language Commands
-- `!language <language>` - Change the bot's language (english, spanish, etc.)
+- `!language <language>` - Change the bot's language (english, spanish, etc.) (Admin only)
 - `!languages` - List all available languages
 
-#### Knowledge Management Commands
+#### Knowledge Management Commands (Admin only)
 - `!knowledge list` - List all available knowledge files
 - `!knowledge activate <name>` - Activate a knowledge file for AI to use
 - `!knowledge deactivate <name>` - Deactivate a knowledge file
 - `!knowledge status` - Show active knowledge files
 - `!knowledges` - List all available knowledge files
+
+#### Memory Management Commands (Admin only)
+- `!memory status` - Display current status of the vector memory system
+- `!memory import <file>` - Import a specific knowledge file into the vector database
+- `!memory importall` - Import all knowledge files into the vector database
+- `!memory search <query>` - Search the vector memory for relevant information
+- `!memory stats` - View statistics about the vector memory database
+
+#### Intent Detection Commands (Admin only)
+- `!intent list` - List all available intent types
+- `!intent analyze <text>` - Analyze text to detect intents
+- `!intent channels` - List channels with custom guidelines
+- `!intent add <channel> <intent> <priority> <response>` - Add a channel-specific intent guideline
+- `!intent test <channel> <message>` - Test how a message would be handled in a channel
 
 #### Model Context Protocol (MCP) Commands
 - `!racing <query>` - Query racing data from Garage61 API (teams, tracks, statistics, etc.)
@@ -138,6 +163,41 @@ The bot now uses several sources of context to provide more relevant responses:
 - **Time Awareness**: Includes current time information in AI prompts
 - **External Data Sources**: Queries MCP providers for domain-specific information
 
+## Intent Detection System
+
+The bot features an advanced intent detection system that automatically recognizes the purpose of user messages and responds appropriately:
+
+### Key Features
+- **Automatic Intent Recognition**: Detects greetings, questions, help requests, gratitude, and more
+- **Channel-Specific Guidelines**: Customize response templates for different channels
+- **Priority-Based Responses**: Adjust how aggressively the bot responds to different intents
+- **Multi-Language Support**: Intent patterns work in both English and Spanish
+- **Dynamic Response Selection**: Chooses from multiple response templates for variety
+
+### Available Intents
+- **greeting**: Detects hello, hi, hey in different languages
+- **question**: Recognizes question patterns and inquiry language
+- **help_request**: Identifies when users are asking for assistance
+- **gratitude**: Detects thank you messages
+- **frustration**: Recognizes when users are experiencing issues
+- **feedback**: Identifies user suggestions and feedback
+- **error_report**: Detects bug reports and technical issues
+- **feature_request**: Recognizes requests for new features
+- **introduction**: Identifies users introducing themselves
+- **farewell**: Detects goodbye messages
+
+### Customizing Intent Detection
+- Administrators can view available intents with `!intent list`
+- Test intent detection with `!intent test <channel> <message>`
+- Add custom guidelines with `!intent add <channel> <intent> <priority> <response>`
+- List channels with custom guidelines using `!intent channels`
+
+### Intent Detection Configuration
+Intent detection can be enabled or disabled in the config file:
+```
+ENABLE_INTENT_DETECTION=True
+```
+
 ## Model Context Protocol (MCP)
 
 The Model Context Protocol (MCP) enables the bot to access external data sources and inject relevant context into AI responses:
@@ -162,6 +222,69 @@ The bot can use custom knowledge files to enhance its responses:
 - Activate knowledge files with `!knowledge activate <name>`
 - The bot will use the information when responding to relevant questions
 - View active and available knowledge files with `!knowledge status` and `!knowledge list`
+
+## Vector Memory System
+
+The bot features an advanced vector memory system that enables semantic search and recall of both conversations and knowledge:
+
+### Key Features
+- **Semantic Search**: Finds relevant information based on meaning, not just keywords
+- **Persistent Storage**: Remembers conversations and knowledge across bot restarts
+- **Automatic Deduplication**: Avoids storing duplicate or highly similar information
+- **Contextual Enhancement**: Improves AI responses with relevant memories
+- **Discord History Integration**: Can import Discord chat history for additional context
+
+### How It Works
+1. Conversations and knowledge files are stored as vector embeddings
+2. When a user asks a question, the bot searches for semantically similar content
+3. Relevant information is included in the AI prompt to enhance responses
+4. This creates a "long-term memory" that grows more useful over time
+
+### Using the Memory System
+- View memory status with `!memory status`
+- Import knowledge files with `!memory import <file>` or `!memory importall`
+- Search the memory directly with `!memory search <query>`
+- Check memory statistics with `!memory stats`
+
+### Memory Architecture
+- **Conversations Collection**: Stores user and bot messages with metadata
+- **Knowledge Collection**: Stores information from knowledge files
+- **Automatic Chunkifying**: Large texts are automatically split into manageable chunks
+- **Cross-collection Search**: Searches both conversations and knowledge simultaneously
+
+### Configuration
+The memory system can be customized in the `.env` file with these settings:
+```
+ENABLE_VECTOR_MEMORY=True
+MEMORY_DATABASE_PATH=data/memory
+MEMORY_EMBEDDING_MODEL=paraphrase-multilingual-MiniLM-L12-v2
+MEMORY_SIMILARITY_THRESHOLD=0.75
+MEMORY_MAX_RESULTS=5
+```
+
+## Permission System
+
+The bot includes a permission system to ensure sensitive commands are only accessible to authorized users:
+
+### Admin-Only Commands
+The following commands are restricted to designated admin users:
+- Persona management: `!persona`
+- Language settings: `!language`, `!languages`
+- Knowledge management: `!knowledge`, `!knowledges`
+- Memory management: `!memory`
+- Intent system management: `!intent`
+
+### Admin Configuration
+Admins are configured in the `.env` file:
+```
+DISCORD_MASTER_USER=your_discord_username#1234
+TWITCH_MASTER_USER=your_twitch_username
+```
+
+### Security Features
+- Double verification for sensitive commands
+- Automatic logging of unauthorized access attempts
+- Clear user feedback for permission denied actions
 
 ## Architecture
 

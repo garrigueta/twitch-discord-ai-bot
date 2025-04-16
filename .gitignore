@@ -50,3 +50,4 @@ twitch_token.txt
 .env.development.local
 .env.test.local
 .env.production.local
+data/memory/*

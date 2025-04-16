@@ -10,3 +10,5 @@ requests
 # Utilities
 python-dotenv
 pydantic
+pyyaml
+hf_xet

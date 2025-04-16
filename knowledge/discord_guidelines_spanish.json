@@ -1,0 +1,85 @@
+{
+    "default": {
+        "greeting": {
+            "response_templates": [
+                "¡Hola! ¿En qué puedo ayudarte hoy?",
+                "¡Hola! ¿Cómo puedo asistirte?",
+                "¡Hey! Estoy aquí si necesitas ayuda."
+            ],
+            "priority": "medium"
+        },
+        "help_request": {
+            "response_templates": [
+                "Estaré encantado de ayudar. ¿Con qué específicamente estás teniendo problemas?",
+                "Definitivamente puedo ayudarte con eso. ¿Podrías proporcionar más detalles sobre lo que necesitas?"
+            ],
+            "priority": "high"
+        },
+        "error_report": {
+            "response_templates": [
+                "Lamento que estés experimentando problemas. Para ayudar a solucionar, ¿podrías proporcionar:\n- Pasos para reproducir el problema\n- Cualquier mensaje de error que estés viendo\n- Lo que esperabas que sucediera",
+                "Vamos a averiguar qué está fallando. ¿Puedes compartir qué pasos llevaron a este error y qué mensajes de error recibiste?"
+            ],
+            "priority": "high"
+        },
+        "feature_request": {
+            "response_templates": [
+                "¡Gracias por la sugerencia! Tomaré nota de esa solicitud de función.",
+                "¡Esa es una idea interesante! Pasaré tu sugerencia al equipo."
+            ],
+            "priority": "medium"
+        },
+        "introduction": {
+            "response_templates": [
+                "¡Bienvenido! Es un placer conocerte. ¡No dudes en preguntar si tienes alguna duda!",
+                "¡Encantado de conocerte! Espero poder charlar contigo en la comunidad."
+            ],
+            "priority": "medium"
+        }
+    },
+    "channels": {
+        "support": {
+            "error_report": {
+                "response_templates": [
+                    "Gracias por reportar este problema. Para ayudar a nuestro equipo a investigar, por favor proporciona:\n- Pasos para reproducir\n- Comportamiento esperado\n- Comportamiento actual\n- Capturas de pantalla si es posible",
+                    "He tomado nota de tu reporte de error. ¿Podrías proporcionar más detalles incluyendo pasos exactos para reproducir y cualquier mensaje de error que veas?"
+                ],
+                "priority": "high"
+            },
+            "feature_request": {
+                "response_templates": [
+                    "¡Gracias por tu sugerencia! Por favor describe:\n- El problema que esto resuelve\n- Cómo imaginas que funcionaría\n- Por qué sería valioso",
+                    "¡Apreciamos las ideas para nuevas funciones! ¿Podrías elaborar sobre el caso de uso y cómo esto mejoraría tu experiencia?"
+                ],
+                "priority": "medium"
+            }
+        },
+        "welcome": {
+            "introduction": {
+                "response_templates": [
+                    "¡Bienvenido a nuestra comunidad! 👋 Siéntete libre de presentarte y echa un vistazo a nuestro canal de reglas.",
+                    "¡Genial tenerte con nosotros! Tómate un momento para leer nuestras pautas comunitarias y ponte cómodo."
+                ],
+                "priority": "high"
+            }
+        },
+        "general": {
+            "question": {
+                "response_templates": [
+                    "¡Esa es una buena pregunta! Haré lo mejor para ayudarte con eso.",
+                    "Estaré encantado de ayudar a responder eso. Déjame pensar..."
+                ],
+                "priority": "medium"
+            }
+        },
+        "feedback": {
+            "feedback": {
+                "response_templates": [
+                    "¡Gracias por compartir tus comentarios! Realmente apreciamos escuchar tus pensamientos.",
+                    "Gracias por tomarte el tiempo para proporcionar feedback. ¡Nos ayuda a mejorar!"
+                ],
+                "priority": "high"
+            }
+        }
+    }
+}

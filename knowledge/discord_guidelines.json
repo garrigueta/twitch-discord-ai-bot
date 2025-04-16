@@ -1,0 +1,53 @@
+{
+    "default": {
+        "greeting": {
+            "response_templates": [
+                "Hello there! How can I help you today?",
+                "Hi! What can I assist you with?",
+                "Hey! I'm here if you need any help."
+            ],
+            "priority": "medium"
+        },
+        "help_request": {
+            "response_templates": [
+                "I'd be happy to help. What specifically are you having trouble with?",
+                "I can definitely assist with that. Could you provide more details about what you need help with?"
+            ],
+            "priority": "high"
+        },
+        "error_report": {
+            "response_templates": [
+                "I'm sorry to hear you're experiencing issues. To help troubleshoot, could you please provide:\n- Steps to reproduce the issue\n- Any error messages you're seeing\n- What you expected to happen",
+                "Let's figure out what's going wrong. Can you share what steps led to this error and any error messages you received?"
+            ],
+            "priority": "high"
+        }
+    },
+    "channels": {
+        "support": {
+            "error_report": {
+                "response_templates": [
+                    "Thank you for reporting this issue. To help our team investigate, please provide:\n- Steps to reproduce\n- Expected behavior\n- Actual behavior\n- Screenshots if possible",
+                    "I've noted your error report. Could you please provide more details including exact steps to reproduce and any error messages you see?"
+                ],
+                "priority": "high"
+            },
+            "feature_request": {
+                "response_templates": [
+                    "Thanks for your suggestion! Please describe:\n- The problem this solves\n- How you envision it working\n- Why it would be valuable",
+                    "We appreciate feature ideas! Could you elaborate on the use case and how this would improve your experience?"
+                ],
+                "priority": "medium"
+            }
+        },
+        "welcome": {
+            "introduction": {
+                "response_templates": [
+                    "Welcome to our community! \ud83d\udc4b Feel free to introduce yourself and check out our rules channel.",
+                    "Great to have you join us! Take a moment to read our community guidelines and make yourself at home."
+                ],
+                "priority": "high"
+            }
+        }
+    }
+}
